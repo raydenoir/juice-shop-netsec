@@ -25,7 +25,13 @@ jobs:
         run: pip install bandit
 
       - name: Run Bandit Scan
-        run: bandit -r .
+        run: bandit -r . -o bandit_report.txt -f txt
+
+      - name: Upload Bandit Scan Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: bandit-report
+          path: bandit_report.txt
 
   image_scan:
     name: Build and Scan Docker Image
@@ -34,20 +40,19 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Log in to DockerHub
-        run: echo "${{ secrets.DOCKERHUB_PASSWORD }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
       - name: Build Docker Image
         run: |
-          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/juice-shop:latest .
-
-      - name: Push Docker Image to DockerHub
-        run: |
-          docker push ${{ secrets.DOCKERHUB_USERNAME }}/juice-shop:latest
+          docker build -t juice-shop:latest .
 
       - name: Perform Docker Scout Scan
         run: |
-          docker scout quickview ${{ secrets.DOCKERHUB_USERNAME }}/juice-shop:latest
+          docker scout quickview juice-shop:latest > docker_scout_report.txt
+
+      - name: Upload Docker Scout Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: docker-scout-report
+          path: docker_scout_report.txt
 
   dast_scan:
     name: Deploy and Run OWASP ZAP Scan
@@ -56,13 +61,13 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Log in to DockerHub
-        run: echo "${{ secrets.DOCKERHUB_PASSWORD }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
-      - name: Pull and Run Docker Image
+      - name: Build Docker Image
         run: |
-          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/juice-shop:latest
-          docker run -d -p 3000:3000 --name juice-shop ${{ secrets.DOCKERHUB_USERNAME }}/juice-shop:latest
+          docker build -t juice-shop:latest .
+
+      - name: Run Docker Container
+        run: |
+          docker run -d -p 3000:3000 --name juice-shop juice-shop:latest
 
       - name: Install OWASP ZAP CLI
         run: |
@@ -70,7 +75,13 @@ jobs:
 
       - name: Run OWASP ZAP Scan
         run: |
-          zap-cli quick-scan --self-contained --start-options="-config api.disablekey=true" http://localhost:3000
+          zap-cli quick-scan --self-contained --start-options="-config api.disablekey=true" http://localhost:3000 > zap_scan_report.txt
+
+      - name: Upload OWASP ZAP Scan Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: zap-scan-report
+          path: zap_scan_report.txt
 
       - name: Stop Docker Container
         if: always()
