@@ -1,0 +1,77 @@
+name: Juice Shop CI Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  sast_scan:
+    name: Static Analysis with Bandit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Install Bandit
+        run: pip install bandit
+
+      - name: Run Bandit Scan
+        run: bandit -r .
+
+  image_scan:
+    name: Build and Scan Docker Image
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Log in to DockerHub
+        run: echo "${{ secrets.DOCKERHUB_PASSWORD }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Build Docker Image
+        run: |
+          docker build -t ${{ secrets.DOCKERHUB_USERNAME }}/juice-shop:latest .
+
+      - name: Push Docker Image to DockerHub
+        run: |
+          docker push ${{ secrets.DOCKERHUB_USERNAME }}/juice-shop:latest
+
+      - name: Perform Docker Scout Scan
+        run: |
+          docker scout quickview ${{ secrets.DOCKERHUB_USERNAME }}/juice-shop:latest
+
+  dast_scan:
+    name: Deploy and Run OWASP ZAP Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Log in to DockerHub
+        run: echo "${{ secrets.DOCKERHUB_PASSWORD }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+      - name: Pull and Run Docker Image
+        run: |
+          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/juice-shop:latest
+          docker run -d -p 3000:3000 --name juice-shop ${{ secrets.DOCKERHUB_USERNAME }}/juice-shop:latest
+
+      - name: Install OWASP ZAP CLI
+        run: |
+          sudo apt-get update && sudo apt-get install -y zaproxy
+
+      - name: Run OWASP ZAP Scan
+        run: |
+          zap-cli quick-scan --self-contained --start-options="-config api.disablekey=true" http://localhost:3000
+
+      - name: Stop Docker Container
+        if: always()
+        run: docker stop juice-shop
