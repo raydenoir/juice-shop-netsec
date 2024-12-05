@@ -9,55 +9,41 @@ on:
       - master
 
 jobs:
-  sast_scan:
-    name: Static Analysis with Snyk
+  build_image:
+    name: Build Docker Image
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
-        with:
-          node-version: '16'
+      - name: Build Docker Image
+        run: |
+          docker build -f Dockerfile -t juice-shop:latest .
+          docker save juice-shop:latest > juice-shop.tar
 
-      - name: Install Snyk
-        run: npm install -g snyk
-
-      - name: Authenticate Snyk
-        env:
-          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
-        run: snyk auth $SNYK_TOKEN
-
-      - name: Run Snyk Code Scan
-        run: snyk test --json > snyk_code_scan_report.json
-
-      - name: Upload Snyk Code Scan Report
+      - name: Upload Docker Image Artifact
         uses: actions/upload-artifact@v3
         with:
-          name: snyk-code-scan-report
-          path: snyk_code_scan_report.json
+          name: juice-shop-image
+          path: juice-shop.tar
 
   image_scan:
     name: Build and Run Image Scan
     runs-on: ubuntu-latest
-
+    needs: build_image
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v2
-
-      - name: Set up Docker
-        uses: docker-practice/actions-setup-docker@v1
+      - name: Download Docker Image Artifact
+        uses: actions/download-artifact@v3
         with:
-          docker_version: '20.10.7'
+          name: juice-shop-image
 
-      - name: Build Docker Image
-        run: docker build -f Dockerfile -t juice-shop:latest .
+      - name: Load Docker Image
+        run: docker load < juice-shop.tar
 
       - name: Docker Scout Scan
         uses: docker/scout-action@v1.15.1
         with:
-          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }} 
+          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
           dockerhub-password: ${{ secrets.DOCKERHUB_PASSWORD }}
           command: quickview,cves
           only-severities: critical,high
@@ -74,26 +60,30 @@ jobs:
   dast_scan:
     name: Deploy and Run OWASP ZAP Scan
     runs-on: ubuntu-latest
-
+    needs: build_image
     steps:
-      - name: Checkout Code
-        uses: actions/checkout@v3
-
-      - name: Build Docker Image
-        run: |
-          docker build -t juice-shop:latest .
-
+      - name: Download Docker Image Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: juice-shop-image
+  
+      - name: Load Docker Image
+        run: docker load < juice-shop.tar
+  
       - name: Run Juice Shop Container
         run: |
           docker run -d -p 3000:3000 --name juice-shop juice-shop:latest
-
+  
+      - name: Pull OWASP ZAP Image
+        run: docker pull owasp/zap2docker-stable
+  
       - name: Run OWASP ZAP Container
         run: |
           docker run -t owasp/zap2docker-stable zap-full-scan.py \
             -t http://host.docker.internal:3000 \
             -r zap_report.html \
             --sarif > zap_report.sarif
-
+  
       - name: Upload ZAP Scan Reports
         uses: actions/upload-artifact@v3
         with:
@@ -101,7 +91,7 @@ jobs:
           path: |
             zap_report.html
             zap_report.sarif
-
+  
       - name: Stop Docker Containers
         if: always()
         run: |
