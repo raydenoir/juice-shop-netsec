@@ -27,6 +27,35 @@ jobs:
           name: juice-shop-image
           path: juice-shop.tar
 
+  sast_scan:
+    name: Static Analysis with Snyk
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'
+
+      - name: Install Snyk
+        run: npm install -g snyk
+
+      - name: Authenticate Snyk
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: snyk auth $SNYK_TOKEN
+
+      - name: Run Snyk Code Scan
+        run: snyk test --json > snyk_code_scan_report.json
+
+      - name: Upload Snyk Code Scan Report
+        uses: actions/upload-artifact@v3
+        with:
+          name: snyk-code-scan-report
+          path: snyk_code_scan_report.json
+
   image_scan:
     name: Build and Run Image Scan
     runs-on: ubuntu-latest
@@ -66,24 +95,28 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: juice-shop-image
-  
+
       - name: Load Docker Image
         run: docker load < juice-shop.tar
-  
+
       - name: Run Juice Shop Container
         run: |
           docker run -d -p 3000:3000 --name juice-shop juice-shop:latest
-  
+          
+      - name: Log in to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKERHUB_PASSWORD }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
       - name: Pull OWASP ZAP Image
         run: docker pull owasp/zap2docker-stable
-  
+
       - name: Run OWASP ZAP Container
         run: |
           docker run -t owasp/zap2docker-stable zap-full-scan.py \
             -t http://host.docker.internal:3000 \
             -r zap_report.html \
             --sarif > zap_report.sarif
-  
+
       - name: Upload ZAP Scan Reports
         uses: actions/upload-artifact@v3
         with:
@@ -91,7 +124,7 @@ jobs:
           path: |
             zap_report.html
             zap_report.sarif
-  
+
       - name: Stop Docker Containers
         if: always()
         run: |
