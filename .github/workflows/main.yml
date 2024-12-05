@@ -10,53 +10,71 @@ on:
 
 jobs:
   sast_scan:
-    name: Static Analysis with Bandit
+    name: Static Analysis with Snyk
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
 
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
         with:
-          python-version: '3.x'
+          node-version: '16'
 
-      - name: Install Bandit
-        run: pip install bandit
+      - name: Install Snyk
+        run: npm install -g snyk
 
-      - name: Run Bandit Scan
-        run: bandit -r . -o bandit_report.txt -f txt
+      - name: Authenticate Snyk
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        run: snyk auth $SNYK_TOKEN
 
-      - name: Upload Bandit Scan Report
+      - name: Run Snyk Code Scan
+        run: snyk test --json > snyk_code_scan_report.json
+
+      - name: Upload Snyk Code Scan Report
         uses: actions/upload-artifact@v3
         with:
-          name: bandit-report
-          path: bandit_report.txt
+          name: snyk-code-scan-report
+          path: snyk_code_scan_report.json
 
   image_scan:
-    name: Build and Scan Docker Image
+    name: Build and Run Image Scan
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v2
+
+      - name: Set up Docker
+        uses: docker-practice/actions-setup-docker@v1
+        with:
+          docker_version: '20.10.7'
 
       - name: Build Docker Image
-        run: |
-          docker build -t juice-shop:latest .
+        run: docker build -f Dockerfile -t juice-shop:latest .
 
-      - name: Perform Docker Scout Scan
-        run: |
-          docker scout quickview juice-shop:latest > docker_scout_report.txt
-
-      - name: Upload Docker Scout Report
-        uses: actions/upload-artifact@v3
+      - name: Docker Scout Scan
+        uses: docker/scout-action@v1.15.1
         with:
-          name: docker-scout-report
-          path: docker_scout_report.txt
+          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }} 
+          dockerhub-password: ${{ secrets.DOCKERHUB_PASSWORD }}
+          command: quickview,cves
+          only-severities: critical,high
+          sarif-file: scout-report.sarif
+          exit-code: true
+
+      - name: Upload Docker Scout Findings
+        uses: actions/upload-artifact@v3
+        if: always()
+        with:
+          name: docker-scout-findings
+          path: scout-report.sarif
 
   dast_scan:
     name: Deploy and Run OWASP ZAP Scan
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -65,24 +83,26 @@ jobs:
         run: |
           docker build -t juice-shop:latest .
 
-      - name: Run Docker Container
+      - name: Run Juice Shop Container
         run: |
           docker run -d -p 3000:3000 --name juice-shop juice-shop:latest
 
-      - name: Install OWASP ZAP CLI
+      - name: Run OWASP ZAP Container
         run: |
-          sudo apt-get update && sudo apt-get install -y zaproxy
+          docker run -t owasp/zap2docker-stable zap-full-scan.py \
+            -t http://host.docker.internal:3000 \
+            -r zap_report.html \
+            --sarif > zap_report.sarif
 
-      - name: Run OWASP ZAP Scan
-        run: |
-          zap-cli quick-scan --self-contained --start-options="-config api.disablekey=true" http://localhost:3000 > zap_scan_report.txt
-
-      - name: Upload OWASP ZAP Scan Report
+      - name: Upload ZAP Scan Reports
         uses: actions/upload-artifact@v3
         with:
-          name: zap-scan-report
-          path: zap_scan_report.txt
+          name: zap-reports
+          path: |
+            zap_report.html
+            zap_report.sarif
 
-      - name: Stop Docker Container
+      - name: Stop Docker Containers
         if: always()
-        run: docker stop juice-shop
+        run: |
+          docker stop juice-shop && docker rm juice-shop
