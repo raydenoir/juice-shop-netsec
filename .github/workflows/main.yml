@@ -37,7 +37,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v3
         with:
-          node-version: '16'
+          node-version: '20'
 
       - name: Install Snyk
         run: npm install -g snyk
@@ -49,14 +49,15 @@ jobs:
 
       - name: Run Snyk Code Scan
         run: |
-          snyk code test --sarif  > results.sarif
+          snyk code test --sarif  > snyk-results.sarif
         continue-on-error: true
 
-      - name: Upload SARIF file
-        uses: github/codeql-action/upload-sarif@v2
+      - name: Upload Snyk Findings
+        uses: actions/upload-artifact@v3
+        if: always()
         with:
-          name: snyk-code-scan-report
-          sarif_file: results.sarif
+          name: snyk-findings
+          path: snyk-results.sarif
           
 
   image_scan:
@@ -95,23 +96,26 @@ jobs:
     needs: build_image
     continue-on-error: true
     steps:
+      - name: Download Docker Image Artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: juice-shop-image
+          
+      - name: Load Docker Image
+        run: docker load < juice-shop.tar
+
+      - name: Run Juice Shop Container
+        run: |
+          docker run -d -p 3000:3000 --name juice-shop juice-shop:latest
+        
       # Docs: https://github.com/zaproxy/action-baseline
       - name: ZAP Scan
-        uses: zaproxy/action-baseline@v0.12.0
+        uses: zaproxy/action-baseline@v0.14.0
         with:
-          token: ${{ secrets.GITHUB_TOKEN }} 
           target: "http://localhost:3000"
-          cmd_options: |
-            chmod a+rwx '/zap/wrk/zap.yaml'  
-          allow_issue_writing: false  
-
-      # Docs: https://github.com/actions/upload-artifact
-      - name: Upload Scan Report
-        uses: actions/upload-artifact@v4
-        with:
-          name: zap_report.html
-          path: .
-          retention-days: 1
+          cmd_options: "-a"
+          allow_issue_writing: false
+          artifact_name: "zap_scan"
 
       - name: Stop Docker Containers
         if: always()
