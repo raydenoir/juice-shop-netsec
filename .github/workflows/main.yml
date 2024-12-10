@@ -94,7 +94,7 @@ jobs:
           path: scout-report.sarif
 
   dast_scan:
-    name: ZAP Scan Baseline
+    name: ZAP Full Scan
     runs-on: ubuntu-latest
     needs: build_image
     continue-on-error: true
